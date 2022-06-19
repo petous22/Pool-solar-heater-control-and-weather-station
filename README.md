@@ -1,6 +1,6 @@
 # Pool-solar-heater-control-and-weather-station
-Arduino Uno WiFi REV2 temperature of pool and solar panel control + weather station in Osek u Duchcova, Czech Republic, 
-Uses thermocouple type K and MAX 6675 thermocouple module for temperature measurement and BME280 like wether station. 
+Arduino Uno WiFi REV2 temperature of pool and solar panel control + weather station in Osek u Duchcova, Czech Republic. 
+Uses thermocouple type K and MAX 6675 thermocouple module for temperature measurement and BME280 like wether station - air pressure, temperature and humidity. 
 Direct control pool filter pump throw 230V AC relay.
 Two pots are for diference of temperature and for hysteresis settings. 
 The measured data is sent to the Thingspeak cloud. The system also includes a simple web server. 
