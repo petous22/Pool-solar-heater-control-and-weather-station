@@ -9,4 +9,6 @@ To make it more accurate I fit the last 10 values. Most of the code is a compila
 The system is in its third year of operation.
 
 https://thingspeak.com/channels/1059934
+
 https://photos.app.goo.gl/MEegEAg4Nvst3QVq9
+
