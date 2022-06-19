@@ -7,6 +7,7 @@ The measured data is sent to the Thingspeak cloud. The system also includes a si
 The thermocouples are used only because they were freely available. They are quite inaccurate and the value oscillates very much. 
 To make it more accurate I fit the last 10 values. Most of the code is a compilation from samples and public sources. 
 The system is in its third year of operation.
+TTGo is a portable datamonitor that reads back data from thingspeak and displays it on a colour display.
 
 https://thingspeak.com/channels/1059934
 
