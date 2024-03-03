@@ -18,8 +18,8 @@ const char* password = "************";
 // ThingSpeak information
 char thingSpeakAddress[] = "api.thingspeak.com";
 unsigned long channelID = SECRET_CH_ID;
-char* readAPIKey = "Y1YH18IJ1MB6713Z";
-char* writeAPIKey = "40L6LEXDT1GD47ED";
+char* readAPIKey = "Y1Y************";
+char* writeAPIKey = "40L******D";
 long rssi = 0;  
 float Sol = 0;   
 float Pool = 0;
