@@ -9,8 +9,8 @@
 #include <ThingSpeak.h>
 #include "esp_system.h"
 // Network parameters
-const char* ssid     = "UPCD95C1F924";
-const char* password = "Macika1914";
+const char* ssid     = "******";
+const char* password = "************";
 //ThingSpeak
 #define SECRET_CH_ID 000000      // replace 0000000 with your channel number
 #define SECRET_WRITE_APIKEY "xyz"   // replace XYZ with your channel write API Key
