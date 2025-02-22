@@ -1,11 +1,10 @@
 /*
    Ovládání solárního ohřevu bazénu V9 od petous22
    Solar colector control system V9 wdt by petous22
-   Arduino UNO R4 WiFi, for Renesas chipsest, 
-   17/02/2025
+   Arduino UNO R4 WiFi, for Renesas chipsest, OTA,
+   22/02/2025
 */
 //*******************************************************************************
-//#define SystemCoreClock 16000000UL
 #include <Wire.h>
 #include <SPI.h>
 #include <MAX6675_Thermocouple.h>
@@ -16,13 +15,24 @@
 #include "arduino_secrets.h"
 #include <LiquidCrystal_PCF8574.h>
 #include <BME280I2C.h>
+#include <ctime>  // Include ctime for time functions - PŘIDÁNO
 //#include <ArduinoHttpClient.h>
 //#define NO_OTA_NETWORK
 //#include "ArduinoOTA.h"
 //*******************************************************************************
-
+// Definice pro letní/zimní čas
+#define NTP_SERVER "pool.ntp.org"
+#define NTP_UPDATE_INTERVAL_WINTER 3600       // Interval aktualizace NTP (zimní čas)
+#define NTP_UPDATE_INTERVAL_SUMMER 7200       // Interval aktualizace NTP (letní čas)
+#define TIME_ZONE_OFFSET_SECONDS_WINTER 3600  // Časový posun GMT+1 (zimní čas)
+#define TIME_ZONE_OFFSET_SECONDS_SUMMER 7200  // Časový posun GMT+2 (letní čas)
+// Rozmezí pro letní čas (orientační)
+#define SUMMER_TIME_START_MONTH 3  // Březen (3)
+#define SUMMER_TIME_END_MONTH 10   // Říjen (10)
+#define SUMMER_TIME_START_DAY 25   // Přibližný startovní den v měsíci pro letní čas
+#define SUMMER_TIME_END_DAY 28     // Přibližný koncový den v měsíci pro letní čas
 WiFiUDP ntpUDP;
-NTPClient timeClient(ntpUDP, "pool.ntp.org", 3600, 36000);  //7200 letní 3600 zimní čas
+NTPClient timeClient(ntpUDP, NTP_SERVER, TIME_ZONE_OFFSET_SECONDS_WINTER, NTP_UPDATE_INTERVAL_WINTER);  // UPRAVENO -  použity #define konstanty pro ZIMNÍ čas jako výchozí
 //term1 solar colector thermocouple
 #define SCK_PIN 4
 #define CS_PIN 3
@@ -35,6 +45,7 @@ NTPClient timeClient(ntpUDP, "pool.ntp.org", 3600, 36000);  //7200 letní 3600 z
 // zero span
 #define Temp1Offset -0.45
 #define Temp2Offset -1.75
+#define Temp3Offset 1.5
 //filter
 #define WINDOW_SIZE 10
 #define MAXDIFF 16
@@ -51,15 +62,15 @@ float VALUE_T2 = 0;
 float SUM_2;
 float READINGS_T2[WINDOW_SIZE];
 float Temp2;  //pool
-float Hystereze = 0.6;
-long PumpTime = 0;
+float Hysteresis = 0.6;
+int PumpTime = 0;
 boolean PumpOn = false;
-byte Citac = 0;
-long T1_errors = 0;
-long T2_errors = 0;
-long DHT_errors = 0;
-long WiFiErr = 0;
-long TsErr = 0;
+byte TS_Timer = 0;
+int T1_errors = 0;
+int T2_errors = 0;
+int BME_errors = 0;
+int WiFiErr = 0;
+int TsErr = 0;
 float temp(NAN), hum(NAN), pres(NAN);
 
 BME280I2C::Settings settings(
@@ -111,8 +122,6 @@ void StartWiFi() {
   }
   reconnectDelay = 1000;
 }
-
-
 //*******************************************************************************
 void printWifiStatus() {
   // print the SSID of the network you're attached to:
@@ -140,6 +149,23 @@ void LCDrefresh() {
   lcd.print("SET:");
   lcd.setCursor(0, 3);
   lcd.print("Baz:");
+}
+//*******************************************************************************
+// Funkce pro detekci letního času (jednoduchá aproximace)
+bool isSummerTime() {
+  time_t epochTime = timeClient.getEpochTime();
+  struct tm* localTime = localtime(&epochTime);
+  int month = localTime->tm_mon + 1;  // tm_mon is 0-indexed, so add 1
+  int day = localTime->tm_mday;
+
+  if (month > SUMMER_TIME_START_MONTH && month < SUMMER_TIME_END_MONTH) {
+    return true;  // Měsíce uvnitř letního času (duben - září)
+  } else if (month == SUMMER_TIME_START_MONTH && day >= SUMMER_TIME_START_DAY) {
+    return true;  // Březen a den po přibližném začátku letního času
+  } else if (month == SUMMER_TIME_END_MONTH && day <= SUMMER_TIME_END_DAY) {
+    return true;  // Říjen a den před přibližným koncem letního času
+  }
+  return false;  // Jinak zimní čas
 }
 //*******************************************************************************
 void setup() {
@@ -171,7 +197,8 @@ void setup() {
     lcd.setCursor(0, 2);
     lcd.print("WiFi error!  ");
     // don't continue
-    while (true);
+    while (true)
+      ;
   }
   lcd.setCursor(0, 2);
   lcd.print(ssid);
@@ -179,13 +206,15 @@ void setup() {
   lcd.setCursor(0, 1);
   lcd.print("WiFi OK          ");
   // start the WiFi OTA library with internal (flash) based storage
-  
+
   ArduinoOTA.begin(WiFi.localIP(), "Arduino", "password", InternalStorage);
   // you're connected now, so print out the status:
   printWifiStatus();
   timeClient.begin();  //start NTP
-  //timeClient.setTimeOffset(3600);  //summer
-  ThingSpeak.begin(client);  //Initialize ThingSpeak cloud
+  //timeClient.setTimeOffset(3600);  //summer - ZRUŠENO - automatické přepínání
+  timeClient.setTimeOffset(TIME_ZONE_OFFSET_SECONDS_WINTER);  // Nastav výchozí časový posun na zimní čas
+  timeClient.setUpdateInterval(NTP_UPDATE_INTERVAL_WINTER);   // Nastav výchozí interval aktualizace na zimní čas
+  ThingSpeak.begin(client);                                   //Initialize ThingSpeak cloud
   //Serial.println("\nStarting connection to TS server...");
   // LCD Print basic note
   LCDrefresh();
@@ -201,6 +230,11 @@ void setup() {
   SUM_2 = thermocouple2->readCelsius() + Temp2Offset;  // init temp 2 value
 }
 //*******************************************************************************
+
+//track current time offset and update interval - PŘIDÁNO
+long currentTimeOffset = TIME_ZONE_OFFSET_SECONDS_WINTER;
+unsigned long currentUpdateInterval = NTP_UPDATE_INTERVAL_WINTER;
+
 // the loop function runs over and over again forever
 void loop() {
 
@@ -211,6 +245,26 @@ void loop() {
   }
   // check for WiFi OTA updates
   ArduinoOTA.poll();
+  // Automatická detekce a nastavení letního/zimního času - UPRAVENO
+  if (isSummerTime()) {
+    if (currentTimeOffset != TIME_ZONE_OFFSET_SECONDS_SUMMER || currentUpdateInterval != NTP_UPDATE_INTERVAL_SUMMER) {
+      timeClient.setTimeOffset(TIME_ZONE_OFFSET_SECONDS_SUMMER);  // Nastav letní časový posun (GMT+2)
+      timeClient.setUpdateInterval(NTP_UPDATE_INTERVAL_SUMMER);   // Nastav interval aktualizace pro letní čas
+      timeClient.forceUpdate();                                   // Okamžitá aktualizace času po změně nastavení
+      currentTimeOffset = TIME_ZONE_OFFSET_SECONDS_SUMMER;        // Update tracked offset - PŘIDÁNO
+      currentUpdateInterval = NTP_UPDATE_INTERVAL_SUMMER;         // Update tracked interval - PŘIDÁNO
+      //Serial.println("Prepnuto na letni cas");
+    }
+  } else {
+    if (currentTimeOffset != TIME_ZONE_OFFSET_SECONDS_WINTER || currentUpdateInterval != NTP_UPDATE_INTERVAL_WINTER) {
+      timeClient.setTimeOffset(TIME_ZONE_OFFSET_SECONDS_WINTER);  // Nastav zimní časový posun (GMT+1)
+      timeClient.setUpdateInterval(NTP_UPDATE_INTERVAL_WINTER);   // Nastav interval aktualizace pro zimní čas
+      timeClient.forceUpdate();                                   // Okamžitá aktualizace času po změně nastavení
+      currentTimeOffset = TIME_ZONE_OFFSET_SECONDS_WINTER;        // Update tracked offset - PŘIDÁNO
+      currentUpdateInterval = NTP_UPDATE_INTERVAL_WINTER;         // Update tracked interval - PŘIDÁNO
+      //Serial.println("Prepnuto na zimni cas");
+    }
+  }
   // read thermocouple
   SUM_1 = SUM_1 - READINGS_T1[INDEX];                    // Remove the oldest entry from the sum
   SUM_2 = SUM_2 - READINGS_T2[INDEX];                    // Remove the oldest entry from the sum2
@@ -242,16 +296,16 @@ void loop() {
   float sensorValue = analogRead(A0);             //***setpoint input from pot
   float Setpoint = MAXDIFF * sensorValue / 1023;  // changed to 16 °C
   float sensorValue2 = analogRead(A1);            //***hysteresis input from pot
-  Hystereze = 3 * sensorValue2 / 1023;
+  Hysteresis = 3 * sensorValue2 / 1023;
   bme.read(pres, temp, hum, tempUnit, presUnit);
   float h = hum;
-  float t = temp;
+  float t = temp + Temp3Offset;
   float p = pres / 100;
 
   // Check if any reads failed and exit early (to try again).
   if (isnan(h) || isnan(t)) {
     //Serial.println(F("Failed to read from BME sensor!"));
-    DHT_errors++;
+    BME_errors++;
   }
   //Serial.print("Solar: ");
   //Serial.println(String(Temp1) + "°C, ");
@@ -263,7 +317,7 @@ void loop() {
   //Serial.println(String(Setpoint) + " °C");
   lcd.setCursor(17, 2);
   //    On/Off pump control code
-  if (Diff > (Setpoint + Hystereze)) {
+  if (Diff > (Setpoint + Hysteresis)) {
     digitalWrite(PumpPin, LOW);  // turn the SSR on... low/ relay high
     digitalWrite(LED_BUILTIN, HIGH);
     lcd.print("On ");
@@ -271,7 +325,7 @@ void loop() {
     Motor = "On";
     PumpOn = true;
   } else {
-    if (Diff < (Setpoint - Hystereze)) {
+    if (Diff < (Setpoint - Hysteresis)) {
       digitalWrite(PumpPin, HIGH);  // turn the LED off
       digitalWrite(LED_BUILTIN, LOW);
       lcd.print("Off");
@@ -303,7 +357,7 @@ void loop() {
   lcd.setCursor(4, 2);
   lcd.print(Setpoint, 1);
   lcd.print("\337C+/-");  //°C
-  lcd.print(Hystereze, 1);
+  lcd.print(Hysteresis, 1);
   ////Serial out
   //Serial.print(F("Humidity: "));
   //Serial.print(h);
@@ -325,13 +379,13 @@ void loop() {
   //Serial.println(rssi);
   lcd.print("p");
   lcd.print(int(p));
-  Citac += 1;
-  //Serial.println("****************************Citac:   " + String(Citac));
+  TS_Timer += 1;
+  //Serial.println("****************************TS_Timer:   " + String(TS_Timer));
   //*******************************************************************************
-  if (Citac > 59) {
-    Citac = 0;  // ThingSpeak output to cloud
-    LCDrefresh(); //displayupdate
-    timeClient.update(); // time update
+  if (TS_Timer > 59) {
+    TS_Timer = 0;         // ThingSpeak output to cloud
+    LCDrefresh();         //displayupdate
+    timeClient.update();  // time update
     ThingSpeak.setField(1, float(Temp1));
     //Serial.println("Field1 ok");
     ThingSpeak.setField(2, float(Temp2));
@@ -350,12 +404,13 @@ void loop() {
     //Serial.println("Field8 ok");
     char myStatusBuffer[100];  // Adjust size as needed
     sprintf(myStatusBuffer, "P.%s :%lu/%lu s Errors: %d:%d:%d RSSI:%ld:TSerr:%d",
-            PumpOn ? "On" : "Off", PumpTime, millis() / 1000, T1_errors, T2_errors, DHT_errors, rssi, TsErr);
+            PumpOn ? "On" : "Off", PumpTime, millis() / 1000, T1_errors, T2_errors, BME_errors, rssi, TsErr);
     ThingSpeak.setStatus(myStatusBuffer);
 
     //write to the ThingSpeak channel
     int ThingspeakResponse = ThingSpeak.writeFields(myChannelNumber, myWriteAPIKey);
     if (ThingspeakResponse == 200) {
+      delay(1);
       //Serial.println("Channel update successful.");
     } else {
       //Serial.println("Problem updating channel. HTTP error code " + String(ThingspeakResponse));
