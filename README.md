@@ -15,3 +15,4 @@ https://thingspeak.com/channels/1059934
 
 https://photos.app.goo.gl/MEegEAg4Nvst3QVq9
 
+New release are for Uno Wifi R4. Finally, it supports wifi ota.
