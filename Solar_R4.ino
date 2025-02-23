@@ -1,8 +1,8 @@
 /*
-   Ovládání solárního ohřevu bazénu V9 od petous22
-   Solar colector control system V9 wdt by petous22
+   Ovládání solárního ohřevu bazénu V10 od petous22
+   Solar colector control system V10  by petous22
    Arduino UNO R4 WiFi, for Renesas chipsest, OTA,
-   22/02/2025
+   23/02/2025
 */
 //*******************************************************************************
 #include <Wire.h>
@@ -31,6 +31,7 @@
 #define SUMMER_TIME_END_MONTH 10   // Říjen (10)
 #define SUMMER_TIME_START_DAY 25   // Přibližný startovní den v měsíci pro letní čas
 #define SUMMER_TIME_END_DAY 28     // Přibližný koncový den v měsíci pro letní čas
+
 WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP, NTP_SERVER, TIME_ZONE_OFFSET_SECONDS_WINTER, NTP_UPDATE_INTERVAL_WINTER);  // UPRAVENO -  použity #define konstanty pro ZIMNÍ čas jako výchozí
 //term1 solar colector thermocouple
@@ -79,7 +80,7 @@ BME280I2C::Settings settings(
   BME280::OSR_X1,
   BME280::Mode_Forced,
   BME280::StandbyTime_1000ms,
-  BME280::Filter_Off,
+  BME280::Filter_4,
   BME280::SpiEnable_False,
   BME280I2C::I2CAddr_0x76  // I2C address. I2C specific.
 );
@@ -99,6 +100,12 @@ String myStatus = "";
 WiFiClient client;
 unsigned long myChannelNumber = SECRET_CH_ID;
 const char* myWriteAPIKey = SECRET_WRITE_APIKEY;
+
+// Měsíční rozvrh - časy ZAČÁTKU a KONCE nočního režimu pro Osek u Duchcova (přibližné časy!)
+const int nightStartHour_monthly[] =   {16, 17, 18, 20, 21, 21, 21, 20, 19, 18, 17, 16}; // Leden až Prosinec - ZAČÁTEK noci (hodina) - UPRAVENO pro Osek (cca)
+const int nightEndHour_monthly[] =     {8,  7,  6,  6,  5,  4,  5,  5,  6,  7,  7,  8};  // Leden až Prosinec - KONEC noci (hodina) - PONECHÁNO (východy slunce se moc nemění)
+const int nightStartMinute_monthly[] = {45, 40, 40, 30, 20, 50, 30, 40, 30, 20, 10, 30}; // Minuty pro začátek noci - UPRAVENO pro Osek (cca)
+const int nightEndMinute_monthly[] =   {0,  20, 20, 10, 15, 50, 10, 10, 30, 30, 10, 0};  // Minuty pro konec noci - PONECHÁNO (východy slunce se moc nemění)
 
 //*******************************************************************************
 unsigned long reconnectDelay = 1000;            // Počáteční zpoždění v milisekundách
@@ -168,6 +175,27 @@ bool isSummerTime() {
   return false;  // Jinak zimní čas
 }
 //*******************************************************************************
+bool isNightTimeMonthlySchedule() {
+  time_t epochTime = timeClient.getEpochTime();
+  struct tm *localTime = localtime(&epochTime);
+  int month = localTime->tm_mon; // tm_mon je měsíc 0-11 (leden = 0, prosinec = 11)
+  int hour = timeClient.getHours();
+  int minute = timeClient.getMinutes();
+
+  int currentNightStartHour = nightStartHour_monthly[month];
+  int currentNightEndHour = nightEndHour_monthly[month];
+  int currentNightStartMinute = nightStartMinute_monthly[month];
+  int currentNightEndMinute = nightEndMinute_monthly[month];
+
+  // Kontrola, zda je aktuální čas v "nočním" rozmezí pro aktuální měsíc
+  if ((hour > currentNightStartHour || (hour == currentNightStartHour && minute >= currentNightStartMinute)) ||
+      (hour < currentNightEndHour || (hour == currentNightEndHour && minute < currentNightEndMinute))) {
+    return true; // Je noc podle měsíčního rozvrhu
+  } else {
+    return false; // Je den podle měsíčního rozvrhu
+  }
+}
+//*******************************************************************************
 void setup() {
   pinMode(PumpPin, OUTPUT);
   pinMode(LED_BUILTIN, OUTPUT);
@@ -197,8 +225,7 @@ void setup() {
     lcd.setCursor(0, 2);
     lcd.print("WiFi error!  ");
     // don't continue
-    while (true)
-      ;
+    while (true);
   }
   lcd.setCursor(0, 2);
   lcd.print(ssid);
@@ -206,12 +233,10 @@ void setup() {
   lcd.setCursor(0, 1);
   lcd.print("WiFi OK          ");
   // start the WiFi OTA library with internal (flash) based storage
-
   ArduinoOTA.begin(WiFi.localIP(), "Arduino", "password", InternalStorage);
   // you're connected now, so print out the status:
-  printWifiStatus();
+  //printWifiStatus();
   timeClient.begin();  //start NTP
-  //timeClient.setTimeOffset(3600);  //summer - ZRUŠENO - automatické přepínání
   timeClient.setTimeOffset(TIME_ZONE_OFFSET_SECONDS_WINTER);  // Nastav výchozí časový posun na zimní čas
   timeClient.setUpdateInterval(NTP_UPDATE_INTERVAL_WINTER);   // Nastav výchozí interval aktualizace na zimní čas
   ThingSpeak.begin(client);                                   //Initialize ThingSpeak cloud
@@ -343,13 +368,10 @@ void loop() {
   lcd.setCursor(4, 3);
   lcd.print(String(Temp2) + "\337C ");
   //Serial.println(timeClient.getFormattedTime());
-  //Serial.println(timeClient.getHours());
-  if ((timeClient.getHours() > 18) or (timeClient.getHours() < 8)) {
-    // backlight off from 19:00 to 8:00
-    lcd.setBacklight(0);
+  if (isNightTimeMonthlySchedule()) {
+    lcd.setBacklight(0); // Vypnutí podsvícení
   } else {
-    // backliht on
-    lcd.setBacklight(255);
+    lcd.setBacklight(255); // Zapnutí podsvícení
   }
 
   lcd.setCursor(4, 1);
@@ -402,7 +424,7 @@ void loop() {
     //Serial.println("Field7 ok");
     ThingSpeak.setField(8, float(Diff));
     //Serial.println("Field8 ok");
-    char myStatusBuffer[100];  // Adjust size as needed
+    char myStatusBuffer[70];  // Adjust size as needed
     sprintf(myStatusBuffer, "P.%s :%lu/%lu s Errors: %d:%d:%d RSSI:%ld:TSerr:%d",
             PumpOn ? "On" : "Off", PumpTime, millis() / 1000, T1_errors, T2_errors, BME_errors, rssi, TsErr);
     ThingSpeak.setStatus(myStatusBuffer);
